@@ -1,151 +1,119 @@
 const express = require("express");
 const app = express();
 const cors = require("cors");
-const bodyParser = require("body-parser");
 require("dotenv").config();
-app.use(cors());
-app.use(bodyParser.urlencoded({ extended: false }));
-app.use(express.static("public"));
-
 const mongoose = require("mongoose");
-mongoose
-  .connect(process.env.DB_URL)
-  .then(() => console.log("Connected to exercise-tracker Database."))
-  .catch((err) => {
-    console.log(err);
-  });
+const { Schema } = mongoose;
 
-// User shema
-const UserShema = new mongoose.Schema({
-  username: { type: String, required: true },
+mongoose.connect(process.env.DB_URL);
+
+const UserSchema = new Schema({
+  username: String,
 });
-const User = mongoose.model("User", UserShema);
-// Exercise shema
-const ExerciseShema = new mongoose.Schema({
-  username: { type: String, required: true },
+const User = mongoose.model("User", UserSchema);
+
+const ExerciseSchema = new Schema({
+  user_id: { type: String, required: true },
   description: String,
   duration: Number,
   date: Date,
 });
-const Exercise = mongoose.model("Exercise", ExerciseShema);
+const Exercise = mongoose.model("Exercise", ExerciseSchema);
 
-// Log shema
-const LogSchema = new mongoose.Schema({
-  username: { type: String, required: true },
-  count: { type: Number, required: true },
-  log: [
-    {
-      description: { type: String, required: true },
-      duration: { type: Number, required: true },
-      date: Date,
-    },
-  ],
-});
-const Log = mongoose.model("Log", LogSchema);
-
+app.use(cors());
+app.use(express.static("public"));
+app.use(express.urlencoded({ extended: true }));
 app.get("/", (req, res) => {
   res.sendFile(__dirname + "/views/index.html");
 });
-app.post("/api/users", async (req, res) => {
-  const username = req.body.username;
-  try {
-    const newUser = new User({ username });
-    const savedUser = await newUser.save();
 
-    res.json({
-      username: savedUser.username,
-      _id: savedUser._id,
-    });
-  } catch (error) {
-    res.json({ error: "Unable to create user" });
+app.get("/api/users", async (req, res) => {
+  const users = await User.find({}).select("_id username");
+  if (!users) {
+    res.send("No users found");
+  } else {
+    res.json(users);
   }
 });
 
-app.get("/api/users", async (req, res) => {
+app.post("/api/users", async (req, res) => {
+  const username = req.body.username;
+
   try {
-    const users = await User.find({}, { username: 1, _id: 1 });
-    res.json(users);
-  } catch (error) {
-    res.json({ error: "Unable to fetch users" });
+    const newUser = new User({ username });
+    const user = await newUser.save();
+    res.json(user);
+  } catch (err) {
+    console.log(err);
   }
 });
 
 app.post("/api/users/:_id/exercises", async (req, res) => {
-  const { _id } = req.params;
+  const id = req.params._id;
   const { description, duration, date } = req.body;
 
   try {
-    const user = await User.findById(_id);
+    const user = await User.findById(id);
     if (!user) {
-      return res.json({ error: "User not found" });
+      res.send("Could not find user");
+    } else {
+      const exerciseObj = new Exercise({
+        user_id: user._id,
+        description,
+        duration,
+        date: date ? new Date(date) : new Date(),
+      });
+      const exercise = await exerciseObj.save();
+      res.json({
+        _id: user._id,
+        username: user.username,
+        description: exercise.description,
+        duration: exercise.duration,
+        date: new Date(exercise.date).toDateString(),
+      });
     }
-    //Cheek if the date is supplied
-    const exerciseDate = date ? new Date(date) : new Date();
-
-    const exercise = new Exercise({
-      username: user.username,
-      description,
-      duration: parseInt(duration),
-      date: exerciseDate,
-    });
-    const savedExercise = await exercise.save();
-
-    // Return the user object with the added exercise details
-    res.json({
-      username: user.username,
-      _id: user._id,
-      description: exercise.description,
-      duration: exercise.duration,
-      date: exercise.date.toDateString(),
-    });
-  } catch (error) {
-    res.json({ error: "Failed to add exercise" });
+  } catch (err) {
+    console.log(err);
+    res.send("There was an error saving the exercise");
   }
 });
 
 app.get("/api/users/:_id/logs", async (req, res) => {
-  const id = req.params._id;
   const { from, to, limit } = req.query;
-
-  try {
-    // Find the user by ID
-    const user = await User.findById(_id);
-    if (!user) {
-      return res.json({ error: "Could not found user" });
-    }
-
-    let date = {};
-
-    if (from) {
-      date["$gte"] = new Date(from);
-    }
-    if (to) {
-      date["$lte"] = new Date(to);
-    }
-    let filter = {
-      userId: id,
-    };
-    if (from || to) {
-      filter.date = date;
-    }
-
-    const exercises = await Exercise.find(filter).limit(parseInt(limit) ?? 100);
-
-    const log = exercises.map((exercise) => ({
-      description: exercise.description,
-      duration: exercise.duration,
-      date: exercise.date.toDateString(),
-    }));
-
-    res.json({
-      username: user.username,
-      _id: user._id,
-      count: exercises.length,
-      log,
-    });
-  } catch (error) {
-    res.json({ error: "Failed to retrieve logs" });
+  const id = req.params._id;
+  const user = await User.findById(id);
+  if (!user) {
+    res.send("Could not find user");
+    return;
   }
+  let dateObj = {};
+  if (from) {
+    dateObj["$gte"] = new Date(from);
+  }
+  if (to) {
+    dateObj["$lte"] = new Date(to);
+  }
+  let filter = {
+    user_id: id,
+  };
+  if (from || to) {
+    filter.date = dateObj;
+  }
+
+  const exercises = await Exercise.find(filter).limit(+limit ?? 500);
+
+  const log = exercises.map((e) => ({
+    description: e.description,
+    duration: e.duration,
+    date: e.date.toDateString(),
+  }));
+
+  res.json({
+    username: user.username,
+    count: exercises.length,
+    _id: user._id,
+    log,
+  });
 });
 
 const listener = app.listen(process.env.PORT || 3000, () => {
