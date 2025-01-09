@@ -104,37 +104,38 @@ app.post("/api/users/:_id/exercises", async (req, res) => {
 });
 
 app.get("/api/users/:_id/logs", async (req, res) => {
-  const { _id } = req.params;
+  const id = req.params._id;
   const { from, to, limit } = req.query;
 
   try {
     // Find the user by ID
     const user = await User.findById(_id);
     if (!user) {
-      return res.json({ error: "User not found" });
+      return res.json({ error: "Could not found user" });
     }
 
-    // Build the query to fetch exercises
-    let query = { userId: _id };
+    let date = {};
 
-    // Apply date filters if provided
+    if (from) {
+      date["$gte"] = new Date(from);
+    }
+    if (to) {
+      date["$lte"] = new Date(to);
+    }
+    let filter = {
+      userId: id,
+    };
     if (from || to) {
-      query.date = {};
-      if (from) query.date.$gte = new Date(from);
-      if (to) query.date.$lte = new Date(to);
+      filter.date = date;
     }
 
-    // Fetch exercises with optional limit
-    const exercises = await Exercise.find(query)
-      .select("description duration date -_id")
-      .limit(parseInt(limit));
+    const exercises = await Exercise.find(filter).limit(parseInt(limit) ?? 100);
 
     const log = exercises.map((exercise) => ({
       description: exercise.description,
       duration: exercise.duration,
       date: exercise.date.toDateString(),
     }));
-
 
     res.json({
       username: user.username,
